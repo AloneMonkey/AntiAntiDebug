@@ -43,7 +43,9 @@ class AMAntiAntiDebug(fb.FBCommand):
 
 def antiPtrace(self):
     ptrace = lldb.debugger.GetSelectedTarget().BreakpointCreateByName("ptrace")
-        if is64Bit():
+        if isMac():
+            ptrace.SetCondition('$rdi==31')
+        elif is64Bit():
             ptrace.SetCondition('$x0==31')
     else:
         ptrace.SetCondition('$r0==31')
@@ -52,7 +54,9 @@ def antiPtrace(self):
 
 def antiSyscall(self):
     syscall = lldb.debugger.GetSelectedTarget().BreakpointCreateByName("syscall")
-        if is64Bit():
+        if isMac():
+            syscall.SetCondition('$rdi==26 && $rsi==31')
+        elif is64Bit():
             syscall.SetCondition('$x0==26 && *(int *)$sp==31')
     else:
         syscall.SetCondition('$r0==26 && $r1==31')
@@ -61,7 +65,9 @@ def antiSyscall(self):
 
 def antiSysctl(self):
     sysctl = lldb.debugger.GetSelectedTarget().BreakpointCreateByName("sysctl")
-        if is64Bit():
+        if isMac():
+            sysctl.SetCondition('$rsi==4 && *(int *)$rdi==1 && *(int *)($rdi+4)==14 && *(int *)($rdi+8)==1')
+        elif is64Bit():
             sysctl.SetCondition('$x1==4 && *(int *)$x0==1 && *(int *)($x0+4)==14 && *(int *)($x0+8)==1')
     else:
         sysctl.SetCondition('$r1==4 && *(int *)$r0==1 && *(int *)($r0+4)==14 && *(int *)($r0+8)==1')
@@ -79,10 +85,18 @@ def is64Bit():
         return True
     return False
 
+def isMac():
+    arch = objc.currentArch()
+    if arch == "x86_64":
+        return True
+    return False
+
 def ptrace_callback(frame, bp_loc, internal_dict):
     print "find ptrace"
     register = "x0"
-    if not is64Bit():
+    if isMac():
+        register = "rdi"
+    elif not is64Bit():
         register = "r0"
     frame.FindRegister(register).value = "0"
     lldb.debugger.HandleCommand('continue')
@@ -91,7 +105,9 @@ def syscall_callback(frame, bp_loc, internal_dict):
     print "find syscall"
     #不知道怎么用api修改sp指向的内容QAQ
     lldb.debugger.GetSelectedTarget().GetProcess().SetSelectedThread(frame.GetThread())
-    if is64Bit():
+    if isMac():
+        lldb.debugger.HandleCommand('register write $rsi 0')
+    elif is64Bit():
         lldb.debugger.HandleCommand('memory write "$sp" 0')
     else:
         lldb.debugger.HandleCommand('register write $r1 0')
@@ -100,11 +116,13 @@ def syscall_callback(frame, bp_loc, internal_dict):
 def sysctl_callback(frame, bp_loc, internal_dict):
     module = frame.GetThread().GetFrameAtIndex(1).GetModule()
     currentModule = lldb.debugger.GetSelectedTarget().GetModuleAtIndex(0)
-    if module == currentModule:
+    if str(module)[:20] == str(currentModule)[:20]:  # to fix that
         print "find sysctl"
         register = "x2"
-        if not is64Bit():
-            register = "r2"
+        if isMac():
+            register = "rdx"
+    elif not is64Bit():
+        register = "r2"
         frame.FindRegister(register).value = "0"
     lldb.debugger.HandleCommand('continue')
 
